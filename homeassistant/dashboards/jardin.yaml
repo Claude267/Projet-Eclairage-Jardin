@@ -1,0 +1,117 @@
+type: grid
+layout:
+  grid-area: "auto"
+  grid-columns: 1
+cards:
+  # Titre
+  - type: heading
+    heading: "Éclairage Jardin"
+    heading_style: title
+
+  # Contrôle principal
+  - type: vertical-stack
+    cards:
+      # Interrupteur Shelly + statut
+      - type: tile
+        entity: switch.shelly1g4_ccba97c455a0
+        name: "Éclairage Jardin"
+        icon: mdi:lamp
+        color: amber
+        tap_action:
+          action: toggle
+        show_entity_picture: false
+
+      # Dernier passage
+      - type: entities
+        title: "Dernière détection"
+        show_header_toggle: false
+        entities:
+          - entity: input_datetime.jardin_dernier_badge_vu
+            name: "Horodatage"
+
+  # Configuration - Durée de base
+  - type: entities
+    title: "Réglage de base"
+    show_header_toggle: false
+    entities:
+      - entity: input_number.duree_active_d_eclairage
+        name: "Durée sans badge"
+
+  # Configuration des badges
+  - type: vertical-stack
+    cards:
+      # Badge 1
+      - type: entities
+        title: "Configuration Badge 1"
+        show_header_toggle: false
+        entities:
+          - entity: input_text.badge_1_nom
+            name: "Nom"
+          - entity: input_text.badge_1_mac
+            name: "Adresse MAC"
+          - entity: input_datetime.badge_1_duree
+            name: "Durée d'éclairage"
+          - entity: sensor.badge_1_rssi_porte
+            name: "RSSI Porte"
+          - entity: sensor.badge_1_rssi_maison
+            name: "RSSI Maison"
+          - entity: binary_sensor.badge_1_a_portee_porte
+            name: "À portée Porte"
+          - entity: binary_sensor.badge_1_a_portee_maison
+            name: "À portée Maison"
+
+      # Badge 2
+      - type: entities
+        title: "Configuration Badge 2"
+        show_header_toggle: false
+        entities:
+          - entity: input_text.badge_2_nom
+            name: "Nom"
+          - entity: input_text.badge_2_mac
+            name: "Adresse MAC"
+          - entity: input_datetime.badge_2_duree
+            name: "Durée d'éclairage"
+          - entity: sensor.badge_2_rssi_porte
+            name: "RSSI Porte"
+          - entity: sensor.badge_2_rssi_maison
+            name: "RSSI Maison"
+          - entity: binary_sensor.badge_2_a_portee_porte
+            name: "À portée Porte"
+          - entity: binary_sensor.badge_2_a_portee_maison
+            name: "À portée Maison"
+
+      # Badge 3
+      - type: entities
+        title: "Configuration Badge 3"
+        show_header_toggle: false
+        entities:
+          - entity: input_text.badge_3_nom
+            name: "Nom"
+          - entity: input_text.badge_3_mac
+            name: "Adresse MAC"
+          - entity: input_datetime.badge_3_duree
+            name: "Durée d'éclairage"
+          - entity: sensor.badge_3_rssi_porte
+            name: "RSSI Porte"
+          - entity: sensor.badge_3_rssi_maison
+            name: "RSSI Maison"
+          - entity: binary_sensor.badge_3_a_portee_porte
+            name: "À portée Porte"
+          - entity: binary_sensor.badge_3_a_portee_maison
+            name: "À portée Maison"
+
+  # Réglages des seuils et filtres
+  - type: entities
+    title: "Seuils de détection"
+    show_header_toggle: false
+    entities:
+      - entity: input_number.badge_rssi_filtrage_porte
+        name: "Seuil RSSI Porte"
+      - entity: input_number.badge_rssi_filtrage_maison
+        name: "Seuil RSSI Maison"
+
+  # Journal des passages
+  - type: custom:lovelace-card-mod-raw
+    title: "Journal des 10 derniers passages"
+    entities:
+      - input_text.jardin_journal_passages
