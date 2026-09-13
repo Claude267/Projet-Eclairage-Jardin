@@ -70,7 +70,7 @@ input_text:
   # Journal des passages (JSON)
   jardin_journal_passages:
     name: "Journal des passages"
-    max: 5000
+    max: 255
 
 input_number:
   # Durée d'éclairage de base (secondes)

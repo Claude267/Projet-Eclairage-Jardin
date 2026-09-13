@@ -1,0 +1,173 @@
+# ============================================================================
+# esp32-maison.yaml - ESPHome 2026.8 - Service Data + Batterie Eddystone-TLM
+# ============================================================================
+# ESP32-C3 à la maison : Scanner BLE local + UART Porte
+# Extraction batterie Eddystone-TLM via Service Data
+
+esphome:
+  name: esp32-maison
+  friendly_name: "ESP32 Maison"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+# API chiffrée vers Home Assistant
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  reboot_timeout: 0s
+  fast_connect: false
+  power_save_mode: none
+
+# UART de réception (Porte -> Maison)
+uart:
+  id: uart_maison
+  rx_pin:
+    number: GPIO20
+    mode: INPUT_PULLUP
+    inverted: true
+  tx_pin: GPIO21
+  baud_rate: 4800
+
+# Scanner BLE local
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 30ms
+    active: true
+
+  on_ble_advertise:
+    - lambda: |-
+        std::string mac = x.address_str();
+
+        // Filtrer les MAC aléatoires/éphémères
+        char c = std::tolower(mac[1]);
+        if (c == '2' || c == '3' || c == '6' || c == '7' || 
+            c == 'a' || c == 'b' || c == 'e' || c == 'f') {
+          return;
+        }
+
+        // ÉTAPE 1 : Capturer la batterie à CHAQUE trame (pas de throttle ici)
+        // pour ne pas rater la trame TLM qui n'arrive pas à chaque fois
+        static std::map<std::string, int> last_battery_mv;
+
+        for (auto data : x.get_service_datas()) {
+          // Frame Type TLM = premier octet 0x20, données batterie aux octets 2-3
+          if (data.data.size() >= 4 && data.data[0] == 0x20) {
+            last_battery_mv[mac] = (data.data[2] << 8) | data.data[3];
+          }
+        }
+
+        // ÉTAPE 2 : Envoyer à HA avec throttle (comme avant)
+        static std::map<std::string, uint32_t> last_seen_ble;
+        uint32_t now = millis();
+
+        // Dédoublonnage : max toutes les 10 secondes
+        if (last_seen_ble.find(mac) == last_seen_ble.end() || 
+            (now - last_seen_ble[mac]) > 10000) {
+          last_seen_ble[mac] = now;
+          int rssi = x.get_rssi();
+
+          // Utiliser la dernière batterie connue pour ce MAC (0 si jamais vue)
+          int battery_mv = last_battery_mv.count(mac) ? last_battery_mv[mac] : 0;
+
+          ESP_LOGI("ble_maison", "MAC: %s | RSSI: %d dBm | Battery: %d mV", 
+                   mac.c_str(), rssi, battery_mv);
+
+          id(ha_event_direct).execute(mac, std::to_string(rssi), "MAISON", 
+                                     std::to_string(battery_mv));
+        }
+
+# Réception UART Porte (polling toutes les 20ms)
+interval:
+  - interval: 20ms
+    then:
+      - lambda: |-
+          static std::string buffer = "";
+          
+          while (id(uart_maison).available() > 0) {
+            uint8_t byte_read;
+            id(uart_maison).read_byte(&byte_read);
+
+            if (byte_read == '\n') {
+              if (!buffer.empty()) {
+                // Nettoyer les \r en début
+                size_t first_valid = buffer.find_first_not_of("\r\n");
+                if (first_valid != std::string::npos) {
+                  buffer = buffer.substr(first_valid);
+                }
+
+                // Parser la trame PORTE;MAC;RSSI
+                std::vector<std::string> parts;
+                std::string token;
+                size_t start = 0;
+                size_t end = buffer.find(';');
+                
+                while (end != std::string::npos) {
+                  parts.push_back(buffer.substr(start, end - start));
+                  start = end + 1;
+                  end = buffer.find(';', start);
+                }
+                parts.push_back(buffer.substr(start));
+
+                if (parts.size() >= 3 && parts[0] == "PORTE") {
+                  std::string mac = parts[1];
+                  std::string rssi_str = parts[2];
+
+                  // Vérifier MAC valide (pas aléatoire)
+                  char c = std::tolower(mac[1]);
+                  if (c == '2' || c == '3' || c == '6' || c == '7' || 
+                      c == 'a' || c == 'b' || c == 'e' || c == 'f') {
+                    buffer.clear();
+                    return;
+                  }
+
+                  static std::map<std::string, uint32_t> last_seen_uart;
+                  uint32_t now = millis();
+
+                  // Dédoublonnage : max toutes les 10 secondes
+                  if (last_seen_uart.find(mac) == last_seen_uart.end() || 
+                      (now - last_seen_uart[mac]) > 10000) {
+                    last_seen_uart[mac] = now;
+
+                    ESP_LOGI("uart_porte", "PORTE;%s;%s", mac.c_str(), rssi_str.c_str());
+                    
+                    // Envoyer événement à HA (pas de batterie pour UART)
+                    id(ha_event_direct).execute(mac, rssi_str, "PORTE", "0");
+                  }
+                }
+                buffer.clear();
+              }
+            } else if (byte_read != '\r') {
+              buffer += (char)byte_read;
+            }
+          }
+
+# Script : envoi d'événement à Home Assistant avec batterie
+script:
+  - id: ha_event_direct
+    mode: parallel
+    max_runs: 10
+    parameters:
+      mac: string
+      rssi: string
+      source: string
+      battery_mv: string
+    then:
+      - homeassistant.event:
+          event: esphome.presence_ble
+          data:
+            mac: !lambda 'return mac;'
+            rssi: !lambda 'return rssi;'
+            source: !lambda 'return source;'
+            battery_mv: !lambda 'return battery_mv;'

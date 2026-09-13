@@ -1,0 +1,50 @@
+# =============================================================
+# porte-esp.yaml - Scanner BLE continu + transmission UART
+# =============================================================
+esphome:
+  name: esp32-porte
+  friendly_name: "ESP32 Porte"
+
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: esp32c3
+  framework:
+    type: esp-idf
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  level: INFO
+
+uart:
+  - id: uart_bus_porte
+    tx_pin: GPIO21
+    baud_rate: 4800
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 320ms
+    window: 30ms
+    active: false
+  on_ble_advertise:
+    then:
+      - lambda: |-
+          std::string mac = x.address_str();
+
+          // Filtrage immediat avant envoi UART pour ne pas encombrer le bus serie
+          char c = std::tolower(mac[1]);
+          if (c == '2' || c == '3' || c == '6' || c == '7' || c == 'a' || c == 'b' || c == 'e' || c == 'f') {
+            return;
+          }
+
+          static std::map<std::string, uint32_t> last_sent_mac;
+          uint32_t now = millis();
+
+          if (last_sent_mac.find(mac) == last_sent_mac.end() || (now - last_sent_mac[mac]) > 5000) {
+            last_sent_mac[mac] = now;
+
+            // Construction de la trame : PROVENANCE;MAC;RSSI
+            std::string msg = "PORTE;" + mac + ";" + std::to_string(x.get_rssi()) + "\n";
+
+            ESP_LOGI("ble_uart", "%s", msg.substr(0, msg.length()-1).c_str());
+            id(uart_bus_porte).write_str(msg.c_str());
+          }
