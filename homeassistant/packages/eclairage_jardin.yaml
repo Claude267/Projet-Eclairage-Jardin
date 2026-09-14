@@ -1,7 +1,21 @@
 # ============================================================================
 # Package Home Assistant - Gestion de l'éclairage du jardin par badges BLE
 # ============================================================================
-# Contient : helpers (input_*), capteurs, automatisations, rest_command
+# Contient : helpers (input_*), capteurs (trigger-based), automatisations, rest_command
+#
+# NOTE DE VERSION : Cette version corrige un bug de l'architecture initiale.
+# input_text.set_value n'accepte pas de paramètre "attributes" (non documenté,
+# non supporté) - les capteurs RSSI/batterie utilisaient ce mécanisme et ne
+# fonctionnaient jamais. Remplacé par des "trigger-based template sensors",
+# le mécanisme natif HA pour ce cas d'usage (cf. doc officielle Template).
+#
+# Cette version corrige aussi un bug fonctionnel : le script précédent
+# appelait shelly_toggle_with_delay (avec on:true) dès qu'un badge était
+# détecté, ce qui ALLUMAIT la lumière automatiquement - contraire à la
+# demande explicite ("Non : Allumage automatique"). Désormais, la détection
+# d'un badge "arme" seulement une fenêtre de temps (X secondes réglable) ;
+# c'est le clic manuel sur l'interrupteur qui déclenche l'application de la
+# durée du badge, si celui-ci a été vu récemment.
 
 # ============================================================================
 # REST COMMANDS - Communication avec le Shelly 1 Gen4
@@ -14,14 +28,15 @@ rest_command:
     payload: '{"id":0,"auto_off":true,"auto_off_delay":{{ duration }}}'
     content_type: "application/json"
 
-  # Toggle avec prolongation (option C)
+  # Toggle avec prolongation (option C) - appelé uniquement quand le relais
+  # est déjà "on" (voir automation "Jardin - Allumage avec badge récent")
   shelly_toggle_with_delay:
     url: "http://192.168.1.36/rpc/Switch.Set"
     method: POST
     payload: '{"id":0,"on":true,"toggle_after":{{ duration }}}'
     content_type: "application/json"
 
-  # Extinction immédiate (extinction manuelle)
+  # Extinction immédiate (non utilisé actuellement, gardé pour usage futur)
   shelly_turn_off:
     url: "http://192.168.1.36/rpc/Switch.Set"
     method: POST
@@ -67,19 +82,20 @@ input_text:
     max: 17
     pattern: '[A-Fa-f0-9]{2}(:[A-Fa-f0-9]{2}){5}'
 
-  # Journal des passages (JSON)
+  # Journal des passages (JSON) - 255 caractères = limite HA pour input_text
   jardin_journal_passages:
     name: "Journal des passages"
     max: 255
 
 input_number:
-  # Durée d'éclairage de base (secondes)
+  # Durée d'éclairage de base (secondes) - utilisée si aucun badge éligible
   duree_active_d_eclairage:
     name: "Durée d'éclairage de base"
     unit_of_measurement: "s"
     min: 15
     max: 300
     step: 5
+    initial: 60
     icon: mdi:timer
 
   # Seuils RSSI de détection (négatif, plus proche = moins négatif)
@@ -89,6 +105,7 @@ input_number:
     min: -95
     max: -40
     step: 1
+    initial: -80
     icon: mdi:signal
 
   badge_rssi_filtrage_maison:
@@ -97,10 +114,24 @@ input_number:
     min: -95
     max: -40
     step: 1
+    initial: -80
     icon: mdi:signal
 
+  # Délai (X) : durée pendant laquelle un badge détecté reste "éligible"
+  # pour un allumage manuel. Si aucun badge n'a été vu depuis plus de X
+  # secondes au moment du clic, la durée de base s'applique (comportement
+  # natif du Shelly, aucune action supplémentaire requise).
+  badge_timeout_detection:
+    name: "Délai de prise en compte badge avant clic"
+    unit_of_measurement: "s"
+    min: 5
+    max: 180
+    step: 5
+    initial: 15
+    icon: mdi:timer-sand
+
 input_datetime:
-  # Durées d'éclairage par badge (stockées comme time 00:MM:SS)
+  # Durées d'éclairage par badge (stockées comme time HH:MM:SS)
   badge_1_duree:
     name: "Badge 1 - Durée éclairage"
     has_time: true
@@ -122,106 +153,226 @@ input_datetime:
     has_date: true
 
 # ============================================================================
-# TEMPLATE SENSORS - Affichage du RSSI et état des badges
+# TEMPLATE SENSORS - Trigger-based, mis à jour depuis l'événement BLE
 # ============================================================================
+# Toutes les entités ci-dessous partagent le même déclencheur (l'événement
+# esphome.presence_ble) mais chacune a sa propre "conditions:" qui détermine
+# si CETTE entité doit se mettre à jour pour cet événement précis. Si la
+# condition est fausse, l'entité conserve sa valeur précédente (cf. doc
+# officielle HA : "Trigger based sensor - Using conditions to control updates").
 template:
-  sensor:
-    # RSSI par badge - Porte
-    - name: "Badge 1 RSSI Porte"
-      unique_id: badge_1_rssi_porte
-      unit_of_measurement: "dBm"
-      icon: mdi:signal
-      state: "{{ state_attr('input_text.badge_1_mac', 'rssi_porte') | default('N/A') }}"
+  - triggers:
+      - trigger: event
+        event_type: esphome.presence_ble
+    sensor:
+      # ------------------------------------------------------------------
+      # RSSI par badge et par source (Porte / Maison)
+      # ------------------------------------------------------------------
+      - name: "Badge 1 RSSI Porte"
+        unique_id: badge_1_rssi_porte
+        unit_of_measurement: "dBm"
+        icon: mdi:signal
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.source == 'PORTE' and
+                 trigger.event.data.mac | upper == states('input_text.badge_1_mac') | upper }}
+        state: "{{ trigger.event.data.rssi }}"
 
-    - name: "Badge 2 RSSI Porte"
-      unique_id: badge_2_rssi_porte
-      unit_of_measurement: "dBm"
-      icon: mdi:signal
-      state: "{{ state_attr('input_text.badge_2_mac', 'rssi_porte') | default('N/A') }}"
+      - name: "Badge 1 RSSI Maison"
+        unique_id: badge_1_rssi_maison
+        unit_of_measurement: "dBm"
+        icon: mdi:signal
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.source == 'MAISON' and
+                 trigger.event.data.mac | upper == states('input_text.badge_1_mac') | upper }}
+        state: "{{ trigger.event.data.rssi }}"
 
-    - name: "Badge 3 RSSI Porte"
-      unique_id: badge_3_rssi_porte
-      unit_of_measurement: "dBm"
-      icon: mdi:signal
-      state: "{{ state_attr('input_text.badge_3_mac', 'rssi_porte') | default('N/A') }}"
+      - name: "Badge 2 RSSI Porte"
+        unique_id: badge_2_rssi_porte
+        unit_of_measurement: "dBm"
+        icon: mdi:signal
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.source == 'PORTE' and
+                 trigger.event.data.mac | upper == states('input_text.badge_2_mac') | upper }}
+        state: "{{ trigger.event.data.rssi }}"
 
-    # RSSI par badge - Maison
-    - name: "Badge 1 RSSI Maison"
-      unique_id: badge_1_rssi_maison
-      unit_of_measurement: "dBm"
-      icon: mdi:signal
-      state: "{{ state_attr('input_text.badge_1_mac', 'rssi_maison') | default('N/A') }}"
+      - name: "Badge 2 RSSI Maison"
+        unique_id: badge_2_rssi_maison
+        unit_of_measurement: "dBm"
+        icon: mdi:signal
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.source == 'MAISON' and
+                 trigger.event.data.mac | upper == states('input_text.badge_2_mac') | upper }}
+        state: "{{ trigger.event.data.rssi }}"
 
-    - name: "Badge 2 RSSI Maison"
-      unique_id: badge_2_rssi_maison
-      unit_of_measurement: "dBm"
-      icon: mdi:signal
-      state: "{{ state_attr('input_text.badge_2_mac', 'rssi_maison') | default('N/A') }}"
+      - name: "Badge 3 RSSI Porte"
+        unique_id: badge_3_rssi_porte
+        unit_of_measurement: "dBm"
+        icon: mdi:signal
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.source == 'PORTE' and
+                 trigger.event.data.mac | upper == states('input_text.badge_3_mac') | upper }}
+        state: "{{ trigger.event.data.rssi }}"
 
-    - name: "Badge 3 RSSI Maison"
-      unique_id: badge_3_rssi_maison
-      unit_of_measurement: "dBm"
-      icon: mdi:signal
-      state: "{{ state_attr('input_text.badge_3_mac', 'rssi_maison') | default('N/A') }}"
+      - name: "Badge 3 RSSI Maison"
+        unique_id: badge_3_rssi_maison
+        unit_of_measurement: "dBm"
+        icon: mdi:signal
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.source == 'MAISON' and
+                 trigger.event.data.mac | upper == states('input_text.badge_3_mac') | upper }}
+        state: "{{ trigger.event.data.rssi }}"
 
-  binary_sensor:
-    # Badge à portée - Porte
-    - name: "Badge 1 à portée Porte"
-      unique_id: badge_1_a_portee_porte
-      icon: mdi:motion-sensor
-      state: >
-        {% set rssi = state_attr('input_text.badge_1_mac', 'rssi_porte') | int(default=-999) %}
-        {% set seuil = states('input_number.badge_rssi_filtrage_porte') | int(default=-80) %}
-        {{ rssi >= seuil }}
+      # ------------------------------------------------------------------
+      # Batterie par badge (mV, envoyée uniquement par l'ESP Maison)
+      # Condition battery_mv > 0 : évite d'écraser une vraie valeur par 0
+      # quand un événement arrive sans trame Eddystone-TLM ce coup-ci.
+      # ------------------------------------------------------------------
+      - name: "Badge 1 Batterie"
+        unique_id: badge_1_batterie
+        unit_of_measurement: "mV"
+        icon: mdi:battery
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.mac | upper == states('input_text.badge_1_mac') | upper and
+                 trigger.event.data.battery_mv | int(0) > 0 }}
+        state: "{{ trigger.event.data.battery_mv }}"
 
-    - name: "Badge 2 à portée Porte"
-      unique_id: badge_2_a_portee_porte
-      icon: mdi:motion-sensor
-      state: >
-        {% set rssi = state_attr('input_text.badge_2_mac', 'rssi_porte') | int(default=-999) %}
-        {% set seuil = states('input_number.badge_rssi_filtrage_porte') | int(default=-80) %}
-        {{ rssi >= seuil }}
+      - name: "Badge 2 Batterie"
+        unique_id: badge_2_batterie
+        unit_of_measurement: "mV"
+        icon: mdi:battery
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.mac | upper == states('input_text.badge_2_mac') | upper and
+                 trigger.event.data.battery_mv | int(0) > 0 }}
+        state: "{{ trigger.event.data.battery_mv }}"
 
-    - name: "Badge 3 à portée Porte"
-      unique_id: badge_3_a_portee_porte
-      icon: mdi:motion-sensor
-      state: >
-        {% set rssi = state_attr('input_text.badge_3_mac', 'rssi_porte') | int(default=-999) %}
-        {% set seuil = states('input_number.badge_rssi_filtrage_porte') | int(default=-80) %}
-        {{ rssi >= seuil }}
+      - name: "Badge 3 Batterie"
+        unique_id: badge_3_batterie
+        unit_of_measurement: "mV"
+        icon: mdi:battery
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.event.data.mac | upper == states('input_text.badge_3_mac') | upper and
+                 trigger.event.data.battery_mv | int(0) > 0 }}
+        state: "{{ trigger.event.data.battery_mv }}"
 
-    # Badge à portée - Maison
-    - name: "Badge 1 à portée Maison"
-      unique_id: badge_1_a_portee_maison
-      icon: mdi:motion-sensor
-      state: >
-        {% set rssi = state_attr('input_text.badge_1_mac', 'rssi_maison') | int(default=-999) %}
-        {% set seuil = states('input_number.badge_rssi_filtrage_maison') | int(default=-80) %}
-        {{ rssi >= seuil }}
+      # ------------------------------------------------------------------
+      # Horodatage de la dernière détection VALIDE (RSSI ≥ seuil) par badge
+      # Sert à "armer" la durée du badge pour le prochain clic manuel.
+      # ------------------------------------------------------------------
+      - name: "Badge 1 Dernière Détection Valide"
+        unique_id: badge_1_derniere_detection_valide
+        device_class: timestamp
+        conditions:
+          - condition: template
+            value_template: >-
+              {%- set seuil_porte = states('input_number.badge_rssi_filtrage_porte') | int(-80) -%}
+              {%- set seuil_maison = states('input_number.badge_rssi_filtrage_maison') | int(-80) -%}
+              {%- set rssi = trigger.event.data.rssi | int(-999) -%}
+              {{ trigger.event.data.mac | upper == states('input_text.badge_1_mac') | upper and
+                 ((trigger.event.data.source == 'PORTE' and rssi >= seuil_porte) or
+                  (trigger.event.data.source == 'MAISON' and rssi >= seuil_maison)) }}
+        state: "{{ now().isoformat() }}"
 
-    - name: "Badge 2 à portée Maison"
-      unique_id: badge_2_a_portee_maison
-      icon: mdi:motion-sensor
-      state: >
-        {% set rssi = state_attr('input_text.badge_2_mac', 'rssi_maison') | int(default=-999) %}
-        {% set seuil = states('input_number.badge_rssi_filtrage_maison') | int(default=-80) %}
-        {{ rssi >= seuil }}
+      - name: "Badge 2 Dernière Détection Valide"
+        unique_id: badge_2_derniere_detection_valide
+        device_class: timestamp
+        conditions:
+          - condition: template
+            value_template: >-
+              {%- set seuil_porte = states('input_number.badge_rssi_filtrage_porte') | int(-80) -%}
+              {%- set seuil_maison = states('input_number.badge_rssi_filtrage_maison') | int(-80) -%}
+              {%- set rssi = trigger.event.data.rssi | int(-999) -%}
+              {{ trigger.event.data.mac | upper == states('input_text.badge_2_mac') | upper and
+                 ((trigger.event.data.source == 'PORTE' and rssi >= seuil_porte) or
+                  (trigger.event.data.source == 'MAISON' and rssi >= seuil_maison)) }}
+        state: "{{ now().isoformat() }}"
 
-    - name: "Badge 3 à portée Maison"
-      unique_id: badge_3_a_portee_maison
-      icon: mdi:motion-sensor
-      state: >
-        {% set rssi = state_attr('input_text.badge_3_mac', 'rssi_maison') | int(default=-999) %}
-        {% set seuil = states('input_number.badge_rssi_filtrage_maison') | int(default=-80) %}
-        {{ rssi >= seuil }}
+      - name: "Badge 3 Dernière Détection Valide"
+        unique_id: badge_3_derniere_detection_valide
+        device_class: timestamp
+        conditions:
+          - condition: template
+            value_template: >-
+              {%- set seuil_porte = states('input_number.badge_rssi_filtrage_porte') | int(-80) -%}
+              {%- set seuil_maison = states('input_number.badge_rssi_filtrage_maison') | int(-80) -%}
+              {%- set rssi = trigger.event.data.rssi | int(-999) -%}
+              {{ trigger.event.data.mac | upper == states('input_text.badge_3_mac') | upper and
+                 ((trigger.event.data.source == 'PORTE' and rssi >= seuil_porte) or
+                  (trigger.event.data.source == 'MAISON' and rssi >= seuil_maison)) }}
+        state: "{{ now().isoformat() }}"
+
+  # ==========================================================================
+  # BINARY SENSORS - "À portée" par badge/source (state-based, se recalcule
+  # dès que le RSSI ou le seuil correspondant change)
+  # ==========================================================================
+  - binary_sensor:
+      - name: "Badge 1 à portée Porte"
+        unique_id: badge_1_a_portee_porte
+        icon: mdi:motion-sensor
+        state: >-
+          {{ states('sensor.badge_1_rssi_porte') | int(-999) >=
+             states('input_number.badge_rssi_filtrage_porte') | int(-80) }}
+
+      - name: "Badge 2 à portée Porte"
+        unique_id: badge_2_a_portee_porte
+        icon: mdi:motion-sensor
+        state: >-
+          {{ states('sensor.badge_2_rssi_porte') | int(-999) >=
+             states('input_number.badge_rssi_filtrage_porte') | int(-80) }}
+
+      - name: "Badge 3 à portée Porte"
+        unique_id: badge_3_a_portee_porte
+        icon: mdi:motion-sensor
+        state: >-
+          {{ states('sensor.badge_3_rssi_porte') | int(-999) >=
+             states('input_number.badge_rssi_filtrage_porte') | int(-80) }}
+
+      - name: "Badge 1 à portée Maison"
+        unique_id: badge_1_a_portee_maison
+        icon: mdi:motion-sensor
+        state: >-
+          {{ states('sensor.badge_1_rssi_maison') | int(-999) >=
+             states('input_number.badge_rssi_filtrage_maison') | int(-80) }}
+
+      - name: "Badge 2 à portée Maison"
+        unique_id: badge_2_a_portee_maison
+        icon: mdi:motion-sensor
+        state: >-
+          {{ states('sensor.badge_2_rssi_maison') | int(-999) >=
+             states('input_number.badge_rssi_filtrage_maison') | int(-80) }}
+
+      - name: "Badge 3 à portée Maison"
+        unique_id: badge_3_a_portee_maison
+        icon: mdi:motion-sensor
+        state: >-
+          {{ states('sensor.badge_3_rssi_maison') | int(-999) >=
+             states('input_number.badge_rssi_filtrage_maison') | int(-80) }}
 
 # ============================================================================
-# SCRIPT - Gestion des événements de détection badges
+# SCRIPT - Journal, horodatage, et déclenchement de la durée badge au clic
 # ============================================================================
 script:
-  # Mise à jour RSSI + armement de la durée badge
+  # Traite chaque détection BLE : horodatage global + journal si dans le seuil
+  # (n'allume JAMAIS la lumière - voir note de version en tête de fichier)
   jardin_traiter_detection_badge:
-    description: "Traite une détection de badge (RSSI + durée)"
+    description: "Horodatage + journal sur détection badge (n'allume pas la lumière)"
     mode: queued
     max_runs: 10
     variables:
@@ -238,54 +389,25 @@ script:
       seuil_porte: "{{ states('input_number.badge_rssi_filtrage_porte') | int(default=-80) }}"
       seuil_maison: "{{ states('input_number.badge_rssi_filtrage_maison') | int(default=-80) }}"
     sequence:
-      # Mise à jour du RSSI (avant filtrage, pour calibration)
-      - if: "{{ source in ['PORTE', 'MAISON'] and badge_index | int > 0 }}"
-        then:
-          - service: input_text.set_value
-            target:
-              entity_id: "input_text.badge_{{ badge_index }}_mac"
-            data:
-              value: "{{ states('input_text.badge_' + badge_index + '_mac') }}"
-              attributes:
-                rssi_{{ source | lower }}: "{{ rssi_int }}"
-
-      # Horodatage dernier badge
-      - service: input_datetime.set_datetime
-        target:
-          entity_id: input_datetime.jardin_dernier_badge_vu
-        data:
-          datetime: "{{ now().isoformat() }}"
-
-      # Filtre RSSI + armement durée
       - if: "{{ badge_index | int > 0 }}"
         then:
+          # Horodatage global (informatif, tous badges connus confondus)
+          - service: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.jardin_dernier_badge_vu
+            data:
+              datetime: "{{ now().isoformat() }}"
+
+          # Journal uniquement si détection dans le seuil (= vrai passage)
           - if: "{{ (source == 'PORTE' and rssi_int >= seuil_porte) or (source == 'MAISON' and rssi_int >= seuil_maison) }}"
             then:
-              # Récupérer la durée du badge (input_datetime stockée comme "HH:MM:SS")
-              - variables:
-                  duree_badge_dt: "{{ states('input_datetime.badge_' + badge_index + '_duree') }}"
-                  duree_badge_sec: |
-                    {%- set dt = states('input_datetime.badge_' + badge_index + '_duree') -%}
-                    {%- if dt and dt != 'unknown' and dt != 'unavailable' -%}
-                      {%- set ts = (as_timestamp(dt) - as_timestamp('1970-01-01')) | int -%}
-                      {{ ts }}
-                    {%- else -%}
-                      {{ states('input_number.duree_active_d_eclairage') | int(default=60) }}
-                    {%- endif -%}
-
-              # Ajouter au journal
               - service: script.jardin_ajouter_journal
                 data:
                   nom: "{{ states('input_text.badge_' + badge_index + '_nom') }}"
                   rssi: "{{ rssi_int }}"
                   source: "{{ source }}"
 
-              # Envoyer toggle_after au Shelly
-              - service: rest_command.shelly_toggle_with_delay
-                data:
-                  duration: "{{ duree_badge_sec }}"
-
-  # Ajouter une entrée au journal JSON
+  # Ajouter une entrée au journal JSON (5 dernières entrées, limite 255 car.)
   jardin_ajouter_journal:
     description: "Ajoute un passage au journal JSON"
     mode: queued
@@ -301,21 +423,52 @@ script:
           journal_mis_a_jour: |
             {%- set journal = journal_actuel -%}
             {%- set _ = journal.insert(0, nouvelle_entree) -%}
-            {%- if journal | length > 10 -%}
-              {{ journal[:10] | tojson }}
+            {%- if journal | length > 5 -%}
+              {{ journal[:5] | tojson }}
             {%- else -%}
               {{ journal | tojson }}
             {%- endif -%}
-
       - service: input_text.set_value
         target:
           entity_id: input_text.jardin_journal_passages
         data:
-          value: "{{ journal_mis_a_jour[:5000] }}"
+          value: "{{ journal_mis_a_jour[:255] }}"
+
+  # Appelé quand le relais Shelly passe à "on" : si un badge a été vu dans
+  # les X dernières secondes (badge_timeout_detection), applique sa durée.
+  # Sinon, ne fait rien : la durée de base (gravée dans le Shelly) s'applique.
+  jardin_declencher_duree_badge:
+    description: "Applique la durée du badge le plus récent si détecté dans les X dernières secondes"
+    mode: single
+    variables:
+      timeout_x: "{{ states('input_number.badge_timeout_detection') | int(15) }}"
+      now_ts: "{{ now().timestamp() }}"
+      durees_eligibles: >-
+        {%- set ns = namespace(liste=[]) -%}
+        {%- for i in [1, 2, 3] -%}
+          {%- set dernier_vu = states('sensor.badge_' ~ i ~ '_derniere_detection_valide') -%}
+          {%- if dernier_vu not in ['unknown', 'unavailable', 'none', None] -%}
+            {%- set ecoule = now_ts - as_timestamp(dernier_vu) -%}
+            {%- if ecoule <= timeout_x -%}
+              {%- set duree_dt = states('input_datetime.badge_' ~ i ~ '_duree') -%}
+              {%- if duree_dt not in ['unknown', 'unavailable'] -%}
+                {%- set duree_sec = (as_timestamp(duree_dt) - as_timestamp('1970-01-01')) | int -%}
+                {%- set ns.liste = ns.liste + [duree_sec] -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ ns.liste }}
+    sequence:
+      - if: "{{ durees_eligibles | length > 0 }}"
+        then:
+          - service: rest_command.shelly_toggle_with_delay
+            data:
+              duration: "{{ durees_eligibles | max }}"
 
   # Extinction manuelle : restaurer durée de base
   jardin_extinction_manuelle:
-    description: "Extinction manuelle - restaure durée de base"
+    description: "Extinction - restaure durée de base pour le prochain allumage sans badge"
     sequence:
       - service: rest_command.shelly_set_duration
         data:
@@ -325,9 +478,9 @@ script:
 # AUTOMATISATIONS - Logique de détection et pilotage
 # ============================================================================
 automation:
-  # Détection d'un badge BLE via événement ESPHome
+  # Détection d'un badge BLE via événement ESPHome (journal + horodatage)
   - alias: "Jardin - Détection badge BLE"
-    description: "Traite les événements de détection badge"
+    description: "Traite les événements de détection badge (sans allumer la lumière)"
     trigger:
       platform: event
       event_type: esphome.presence_ble
@@ -338,7 +491,17 @@ automation:
           rssi: "{{ trigger.event.data.rssi }}"
           source: "{{ trigger.event.data.source }}"
 
-  # Extinction manuelle (via tableau de bord)
+  # Allumage manuel (clic) : applique la durée du badge si vu récemment
+  - alias: "Jardin - Allumage avec badge récent"
+    description: "Sur clic, utilise la durée du badge s'il a été détecté dans les X dernières secondes"
+    trigger:
+      platform: state
+      entity_id: switch.shelly1g4_ccba97c455a0
+      to: "on"
+    action:
+      - service: script.jardin_declencher_duree_badge
+
+  # Extinction manuelle (via tableau de bord ou bouton physique)
   - alias: "Jardin - Extinction manuelle"
     description: "Restaure durée de base à l'extinction"
     trigger:
