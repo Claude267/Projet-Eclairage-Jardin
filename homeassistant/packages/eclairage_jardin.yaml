@@ -23,22 +23,22 @@
 rest_command:
   # Synchro de la durée de base vers le Shelly auto_off_delay
   shelly_set_duration:
-    url: "http://192.168.1.36/rpc/Switch.SetConfig"
+    url: "http://192.168.1.136/rpc/Switch.SetConfig"
     method: POST
-    payload: '{"id":0,"auto_off":true,"auto_off_delay":{{ duration }}}'
+    payload: '{"id":0,"config":{"auto_off":true,"auto_off_delay":{{ duration }}}}'
     content_type: "application/json"
 
   # Toggle avec prolongation (option C) - appelé uniquement quand le relais
   # est déjà "on" (voir automation "Jardin - Allumage avec badge récent")
   shelly_toggle_with_delay:
-    url: "http://192.168.1.36/rpc/Switch.Set"
+    url: "http://192.168.1.136/rpc/Switch.Set"
     method: POST
     payload: '{"id":0,"on":true,"toggle_after":{{ duration }}}'
     content_type: "application/json"
 
   # Extinction immédiate (non utilisé actuellement, gardé pour usage futur)
   shelly_turn_off:
-    url: "http://192.168.1.36/rpc/Switch.Set"
+    url: "http://192.168.1.136/rpc/Switch.Set"
     method: POST
     payload: '{"id":0,"on":false}'
     content_type: "application/json"
@@ -103,7 +103,7 @@ input_number:
     name: "Seuil RSSI Porte"
     unit_of_measurement: "dBm"
     min: -105
-    max: -105
+    max: -40
     step: 1
     initial: -80
     icon: mdi:signal
@@ -111,7 +111,7 @@ input_number:
   badge_rssi_filtrage_maison:
     name: "Seuil RSSI Maison"
     unit_of_measurement: "dBm"
-    min: -95
+    min: -105
     max: -40
     step: 1
     initial: -80
@@ -340,7 +340,7 @@ template:
           {%- else -%}
             {%- set ecoule = (now() - _ent.last_updated).total_seconds() | int -%}
             {%- set m, s = ecoule // 60, ecoule % 60 -%}
-            {{ '%02d:%02d' | format(m, s) }}
+            {{ '%02d min %02d s' | format(m, s) }}
           {%- endif -%}
 
       - name: "Badge 2 Temps Écoulé"
@@ -353,7 +353,7 @@ template:
           {%- else -%}
             {%- set ecoule = (now() - _ent.last_updated).total_seconds() | int -%}
             {%- set m, s = ecoule // 60, ecoule % 60 -%}
-            {{ '%02d:%02d' | format(m, s) }}
+            {{ '%02d min %02d s' | format(m, s) }}
           {%- endif -%}
 
       - name: "Badge 3 Temps Écoulé"
@@ -366,7 +366,7 @@ template:
           {%- else -%}
             {%- set ecoule = (now() - _ent.last_updated).total_seconds() | int -%}
             {%- set m, s = ecoule // 60, ecoule % 60 -%}
-            {{ '%02d:%02d' | format(m, s) }}
+            {{ '%02d min %02d s' | format(m, s) }}
           {%- endif -%}
 
     binary_sensor:
@@ -515,10 +515,9 @@ script:
           {%- if dernier_vu not in ['unknown', 'unavailable', 'none', None] -%}
             {%- set ecoule = now_ts - as_timestamp(dernier_vu) -%}
             {%- if ecoule <= timeout_x -%}
-              {%- set duree_dt = states('input_datetime.badge_' ~ i ~ '_duree') -%}
-              {%- if duree_dt not in ['unknown', 'unavailable'] -%}
-                {%- set duree_sec = (as_timestamp(duree_dt) - as_timestamp('1970-01-01')) | int -%}
-                {%- set ns.liste = ns.liste + [duree_sec] -%}
+              {%- set duree_sec = state_attr('input_datetime.badge_' ~ i ~ '_duree', 'timestamp') -%}
+              {%- if duree_sec is not none -%}
+                {%- set ns.liste = ns.liste + [duree_sec | int] -%}
               {%- endif -%}
             {%- endif -%}
           {%- endif -%}
@@ -574,7 +573,7 @@ automation:
       entity_id: switch.shelly1g4_ccba97c455a0
       to: "off"
     action:
-      - delay: 500ms  # Attendre réaction Shelly
+      - delay: "00:00:00.500"  # Attendre réaction Shelly
       - service: script.jardin_extinction_manuelle
 
   # Synchro durée de base au démarrage de HA
@@ -584,7 +583,7 @@ automation:
       platform: homeassistant
       event: start
     action:
-      - delay: 10s  # Attendre HA prêt
+      - delay: "00:00:10"  # Attendre HA prêt
       - service: rest_command.shelly_set_duration
         data:
           duration: "{{ states('input_number.duree_active_d_eclairage') | int(default=60) }}"
