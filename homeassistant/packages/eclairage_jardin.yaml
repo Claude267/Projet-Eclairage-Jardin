@@ -102,8 +102,8 @@ input_number:
   badge_rssi_filtrage_porte:
     name: "Seuil RSSI Porte"
     unit_of_measurement: "dBm"
-    min: -95
-    max: -40
+    min: -105
+    max: -105
     step: 1
     initial: -80
     icon: mdi:signal
@@ -319,51 +319,116 @@ template:
         state: "{{ now().isoformat() }}"
 
   # ==========================================================================
-  # BINARY SENSORS - "À portée" par badge/source (state-based, se recalcule
-  # dès que le RSSI ou le seuil correspondant change)
+  # BINARY SENSORS - "À portée" par badge/source
+  # Trigger-based (réévalué toutes les 5s) pour détecter aussi l'ABSENCE de
+  # nouvelle trame : si le capteur RSSI correspondant n'a pas été mis à jour
+  # depuis plus de 21 secondes (2x le rythme d'émission normal ~10s + marge),
+  # "à portée" repasse automatiquement à "off", même si le RSSI affiché reste
+  # figé sur sa dernière valeur connue (historique, volontairement conservé).
   # ==========================================================================
-  - binary_sensor:
+  - triggers:
+      - trigger: time_pattern
+        seconds: "/5"
+    sensor:
+      - name: "Badge 1 Temps Écoulé"
+        unique_id: badge_1_temps_ecoule
+        icon: mdi:timer-outline
+        state: >-
+          {%- set _ent = states.sensor.badge_1_derniere_detection_valide -%}
+          {%- if _ent is none or _ent.state in ['unknown', 'unavailable'] -%}
+            --:--
+          {%- else -%}
+            {%- set ecoule = (now() - _ent.last_updated).total_seconds() | int -%}
+            {%- set m, s = ecoule // 60, ecoule % 60 -%}
+            {{ '%02d:%02d' | format(m, s) }}
+          {%- endif -%}
+
+      - name: "Badge 2 Temps Écoulé"
+        unique_id: badge_2_temps_ecoule
+        icon: mdi:timer-outline
+        state: >-
+          {%- set _ent = states.sensor.badge_2_derniere_detection_valide -%}
+          {%- if _ent is none or _ent.state in ['unknown', 'unavailable'] -%}
+            --:--
+          {%- else -%}
+            {%- set ecoule = (now() - _ent.last_updated).total_seconds() | int -%}
+            {%- set m, s = ecoule // 60, ecoule % 60 -%}
+            {{ '%02d:%02d' | format(m, s) }}
+          {%- endif -%}
+
+      - name: "Badge 3 Temps Écoulé"
+        unique_id: badge_3_temps_ecoule
+        icon: mdi:timer-outline
+        state: >-
+          {%- set _ent = states.sensor.badge_3_derniere_detection_valide -%}
+          {%- if _ent is none or _ent.state in ['unknown', 'unavailable'] -%}
+            --:--
+          {%- else -%}
+            {%- set ecoule = (now() - _ent.last_updated).total_seconds() | int -%}
+            {%- set m, s = ecoule // 60, ecoule % 60 -%}
+            {{ '%02d:%02d' | format(m, s) }}
+          {%- endif -%}
+
+    binary_sensor:
       - name: "Badge 1 à portée Porte"
         unique_id: badge_1_a_portee_porte
         icon: mdi:motion-sensor
         state: >-
-          {{ states('sensor.badge_1_rssi_porte') | int(-999) >=
-             states('input_number.badge_rssi_filtrage_porte') | int(-80) }}
+          {%- set rssi_ok = states('sensor.badge_1_rssi_porte') | int(-999) >=
+                             states('input_number.badge_rssi_filtrage_porte') | int(-80) -%}
+          {%- set _ent = states.sensor.badge_1_rssi_porte -%}
+          {%- set recent = ((now() - _ent.last_updated).total_seconds() <= 21) if _ent is not none else false -%}
+          {{ rssi_ok and recent }}
 
       - name: "Badge 2 à portée Porte"
         unique_id: badge_2_a_portee_porte
         icon: mdi:motion-sensor
         state: >-
-          {{ states('sensor.badge_2_rssi_porte') | int(-999) >=
-             states('input_number.badge_rssi_filtrage_porte') | int(-80) }}
+          {%- set rssi_ok = states('sensor.badge_2_rssi_porte') | int(-999) >=
+                             states('input_number.badge_rssi_filtrage_porte') | int(-80) -%}
+          {%- set _ent = states.sensor.badge_2_rssi_porte -%}
+          {%- set recent = ((now() - _ent.last_updated).total_seconds() <= 21) if _ent is not none else false -%}
+          {{ rssi_ok and recent }}
 
       - name: "Badge 3 à portée Porte"
         unique_id: badge_3_a_portee_porte
         icon: mdi:motion-sensor
         state: >-
-          {{ states('sensor.badge_3_rssi_porte') | int(-999) >=
-             states('input_number.badge_rssi_filtrage_porte') | int(-80) }}
+          {%- set rssi_ok = states('sensor.badge_3_rssi_porte') | int(-999) >=
+                             states('input_number.badge_rssi_filtrage_porte') | int(-80) -%}
+          {%- set _ent = states.sensor.badge_3_rssi_porte -%}
+          {%- set recent = ((now() - _ent.last_updated).total_seconds() <= 21) if _ent is not none else false -%}
+          {{ rssi_ok and recent }}
 
       - name: "Badge 1 à portée Maison"
         unique_id: badge_1_a_portee_maison
         icon: mdi:motion-sensor
         state: >-
-          {{ states('sensor.badge_1_rssi_maison') | int(-999) >=
-             states('input_number.badge_rssi_filtrage_maison') | int(-80) }}
+          {%- set rssi_ok = states('sensor.badge_1_rssi_maison') | int(-999) >=
+                             states('input_number.badge_rssi_filtrage_maison') | int(-80) -%}
+          {%- set _ent = states.sensor.badge_1_rssi_maison -%}
+          {%- set recent = ((now() - _ent.last_updated).total_seconds() <= 21) if _ent is not none else false -%}
+          {{ rssi_ok and recent }}
 
       - name: "Badge 2 à portée Maison"
         unique_id: badge_2_a_portee_maison
         icon: mdi:motion-sensor
         state: >-
-          {{ states('sensor.badge_2_rssi_maison') | int(-999) >=
-             states('input_number.badge_rssi_filtrage_maison') | int(-80) }}
+          {%- set rssi_ok = states('sensor.badge_2_rssi_maison') | int(-999) >=
+                             states('input_number.badge_rssi_filtrage_maison') | int(-80) -%}
+          {%- set _ent = states.sensor.badge_2_rssi_maison -%}
+          {%- set recent = ((now() - _ent.last_updated).total_seconds() <= 21) if _ent is not none else false -%}
+          {{ rssi_ok and recent }}
 
       - name: "Badge 3 à portée Maison"
         unique_id: badge_3_a_portee_maison
         icon: mdi:motion-sensor
         state: >-
-          {{ states('sensor.badge_3_rssi_maison') | int(-999) >=
-             states('input_number.badge_rssi_filtrage_maison') | int(-80) }}
+          {%- set rssi_ok = states('sensor.badge_3_rssi_maison') | int(-999) >=
+                             states('input_number.badge_rssi_filtrage_maison') | int(-80) -%}
+          {%- set _ent = states.sensor.badge_3_rssi_maison -%}
+          {%- set recent = ((now() - _ent.last_updated).total_seconds() <= 21) if _ent is not none else false -%}
+          {{ rssi_ok and recent }}
 
 # ============================================================================
 # SCRIPT - Journal, horodatage, et déclenchement de la durée badge au clic

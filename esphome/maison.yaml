@@ -42,8 +42,8 @@ uart:
 # Scanner BLE local
 esp32_ble_tracker:
   scan_parameters:
-    interval: 320ms
-    window: 30ms
+    interval: 100ms
+    window: 99ms
     active: true
 
   on_ble_advertise:
