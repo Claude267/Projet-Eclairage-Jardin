@@ -1,0 +1,224 @@
+views:
+  - title: Jardin
+    path: jardin
+    icon: mdi:flower
+    type: sections
+    max_columns: 3
+    sections:
+      # ------------------------------------------------------------------
+      # Interrupteur principal
+      # ------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Éclairage Jardin"
+            icon: mdi:string-lights
+          - type: tile
+            entity: switch.shelly1g4_ccba97c455a0
+            name: "Éclairage Jardin"
+            icon: mdi:string-lights
+            color: amber
+
+      # ------------------------------------------------------------------
+      # Réglages généraux
+      # ------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Réglages généraux"
+            icon: mdi:cog-outline
+          - type: tile
+            entity: input_number.duree_active_d_eclairage
+            name: "Durée d'éclairage de base"
+            icon: mdi:timer
+            features_position: bottom
+            features:
+              - type: numeric-input
+                style: slider
+          - type: tile
+            entity: input_number.badge_timeout_detection
+            name: "Délai de prise en compte badge avant clic"
+            icon: mdi:timer-sand
+            features_position: bottom
+            features:
+              - type: numeric-input
+                style: slider
+
+      # ------------------------------------------------------------------
+      # Seuils de détection
+      # ------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Seuils de détection RSSI"
+            icon: mdi:signal-variant
+          - type: tile
+            entity: input_number.badge_rssi_filtrage_porte
+            name: "Seuil RSSI Porte"
+            icon: mdi:signal
+            features_position: bottom
+            features:
+              - type: numeric-input
+                style: slider
+          - type: tile
+            entity: input_number.badge_rssi_filtrage_maison
+            name: "Seuil RSSI Maison"
+            icon: mdi:signal
+            features_position: bottom
+            features:
+              - type: numeric-input
+                style: slider
+
+      # ------------------------------------------------------------------
+      # Badge 1
+      # ------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Badge 1"
+            icon: mdi:badge-account-horizontal-outline
+          - type: tile
+            entity: input_text.badge_1_nom
+            name: "Nom"
+            icon: mdi:account
+          - type: tile
+            entity: input_text.badge_1_mac
+            name: "Adresse MAC"
+            icon: mdi:bluetooth
+          - type: tile
+            entity: input_datetime.badge_1_duree
+            name: "Durée d'éclairage"
+            icon: mdi:timer-outline
+          - type: tile
+            entity: sensor.badge_1_rssi_porte
+            name: "RSSI Porte"
+            icon: mdi:signal
+          - type: tile
+            entity: sensor.badge_1_rssi_maison
+            name: "RSSI Maison"
+            icon: mdi:signal
+          - type: tile
+            entity: binary_sensor.badge_1_batterie_faible
+            name: "Batterie faible"
+            color: red
+          - type: tile
+            entity: binary_sensor.badge_1_a_portee_porte
+            name: "À portée Porte"
+            icon: mdi:motion-sensor
+            color: amber
+          - type: tile
+            entity: binary_sensor.badge_1_a_portee_maison
+            name: "À portée Maison"
+            icon: mdi:motion-sensor
+            color: amber
+          - type: tile
+            entity: sensor.badge_1_temps_ecoule
+            name: "Depuis…"
+            icon: mdi:timer-outline
+
+      # ------------------------------------------------------------------
+      # Badge 2
+      # ------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Badge 2"
+            icon: mdi:badge-account-horizontal-outline
+          - type: tile
+            entity: input_text.badge_2_nom
+            name: "Nom"
+            icon: mdi:account
+          - type: tile
+            entity: input_text.badge_2_mac
+            name: "Adresse MAC"
+            icon: mdi:bluetooth
+          - type: tile
+            entity: input_datetime.badge_2_duree
+            name: "Durée d'éclairage"
+            icon: mdi:timer-outline
+          - type: tile
+            entity: sensor.badge_2_rssi_porte
+            name: "RSSI Porte"
+            icon: mdi:signal
+          - type: tile
+            entity: sensor.badge_2_rssi_maison
+            name: "RSSI Maison"
+            icon: mdi:signal
+          - type: tile
+            entity: binary_sensor.badge_2_batterie_faible
+            name: "Batterie faible"
+            color: red
+          - type: tile
+            entity: binary_sensor.badge_2_a_portee_porte
+            name: "À portée Porte"
+            icon: mdi:motion-sensor
+            color: amber
+          - type: tile
+            entity: binary_sensor.badge_2_a_portee_maison
+            name: "À portée Maison"
+            icon: mdi:motion-sensor
+            color: amber
+          - type: tile
+            entity: sensor.badge_2_temps_ecoule
+            name: "Depuis…"
+            icon: mdi:timer-outline
+
+      # ------------------------------------------------------------------
+      # Badge 3
+      # ------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Badge 3"
+            icon: mdi:badge-account-horizontal-outline
+          - type: tile
+            entity: input_text.badge_3_nom
+            name: "Nom"
+            icon: mdi:account
+          - type: tile
+            entity: input_text.badge_3_mac
+            name: "Adresse MAC"
+            icon: mdi:bluetooth
+          - type: tile
+            entity: input_datetime.badge_3_duree
+            name: "Durée d'éclairage"
+            icon: mdi:timer-outline
+          - type: tile
+            entity: sensor.badge_3_rssi_porte
+            name: "RSSI Porte"
+            icon: mdi:signal
+          - type: tile
+            entity: sensor.badge_3_rssi_maison
+            name: "RSSI Maison"
+            icon: mdi:signal
+          - type: tile
+            entity: binary_sensor.badge_3_batterie_faible
+            name: "Batterie faible"
+            color: red
+          - type: tile
+            entity: binary_sensor.badge_3_a_portee_porte
+            name: "À portée Porte"
+            icon: mdi:motion-sensor
+            color: amber
+          - type: tile
+            entity: binary_sensor.badge_3_a_portee_maison
+            name: "À portée Maison"
+            icon: mdi:motion-sensor
+            color: amber
+          - type: tile
+            entity: sensor.badge_3_temps_ecoule
+            name: "Depuis…"
+            icon: mdi:timer-outline
+
+      # ------------------------------------------------------------------
+      # Journal des passages
+      # ------------------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: "Journal des passages (5 derniers)"
+            icon: mdi:history
+          - type: tile
+            entity: input_text.jardin_journal_passages
+            name: "Dernier passage"
+            icon: mdi:notebook-outline

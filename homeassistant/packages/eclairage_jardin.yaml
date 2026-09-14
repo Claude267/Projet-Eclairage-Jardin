@@ -82,7 +82,8 @@ input_text:
     max: 17
     pattern: '[A-Fa-f0-9]{2}(:[A-Fa-f0-9]{2}){5}'
 
-  # Journal des passages (JSON) - 255 caractères = limite HA pour input_text
+  # Journal des passages - une ligne texte par détection, l'historique natif
+  # HA (bouton "Afficher plus" de la carte) garde les passages précédents
   jardin_journal_passages:
     name: "Journal des passages"
     max: 255
@@ -146,11 +147,6 @@ input_datetime:
     name: "Badge 3 - Durée éclairage"
     has_time: true
     has_date: false
-
-  jardin_dernier_badge_vu:
-    name: "Dernier badge détecté"
-    has_time: true
-    has_date: true
 
 # ============================================================================
 # TEMPLATE SENSORS - Trigger-based, mis à jour depuis l'événement BLE
@@ -430,6 +426,27 @@ template:
           {%- set recent = ((now() - _ent.last_updated).total_seconds() <= 21) if _ent is not none else false -%}
           {{ rssi_ok and recent }}
 
+  # ==========================================================================
+  # BINARY SENSORS - Batterie faible par badge
+  # device_class: battery -> HA colore automatiquement en rouge quand "on"
+  # (convention native, pas besoin de couleur manuelle sur le dashboard)
+  # ==========================================================================
+  - binary_sensor:
+      - name: "Badge 1 Batterie Faible"
+        unique_id: badge_1_batterie_faible
+        device_class: battery
+        state: "{{ states('sensor.badge_1_batterie') | int(9999) < 2500 }}"
+
+      - name: "Badge 2 Batterie Faible"
+        unique_id: badge_2_batterie_faible
+        device_class: battery
+        state: "{{ states('sensor.badge_2_batterie') | int(9999) < 2500 }}"
+
+      - name: "Badge 3 Batterie Faible"
+        unique_id: badge_3_batterie_faible
+        device_class: battery
+        state: "{{ states('sensor.badge_3_batterie') | int(9999) < 2500 }}"
+
 # ============================================================================
 # SCRIPT - Journal, horodatage, et déclenchement de la durée badge au clic
 # ============================================================================
@@ -439,7 +456,7 @@ script:
   jardin_traiter_detection_badge:
     description: "Horodatage + journal sur détection badge (n'allume pas la lumière)"
     mode: queued
-    max_runs: 10
+    max: 10
     variables:
       mac_normalise: "{{ (mac | default('') | upper | replace(' ', '')) }}"
       badge_index: |
@@ -456,48 +473,21 @@ script:
     sequence:
       - if: "{{ badge_index | int > 0 }}"
         then:
-          # Horodatage global (informatif, tous badges connus confondus)
-          - service: input_datetime.set_datetime
-            target:
-              entity_id: input_datetime.jardin_dernier_badge_vu
-            data:
-              datetime: "{{ now().isoformat() }}"
-
           # Journal uniquement si détection dans le seuil (= vrai passage)
+          # Une simple ligne texte par passage, avec date/heure incluse ;
+          # l'historique natif de HA ("Afficher plus" sur la carte) garde
+          # les passages précédents, purgés automatiquement après 14 jours
+          # (voir automation dédiée).
           - if: "{{ (source == 'PORTE' and rssi_int >= seuil_porte) or (source == 'MAISON' and rssi_int >= seuil_maison) }}"
             then:
-              - service: script.jardin_ajouter_journal
+              - service: input_text.set_value
+                target:
+                  entity_id: input_text.jardin_journal_passages
                 data:
-                  nom: "{{ states('input_text.badge_' + badge_index + '_nom') }}"
-                  rssi: "{{ rssi_int }}"
-                  source: "{{ source }}"
-
-  # Ajouter une entrée au journal JSON (5 dernières entrées, limite 255 car.)
-  jardin_ajouter_journal:
-    description: "Ajoute un passage au journal JSON"
-    mode: queued
-    variables:
-      journal_actuel: "{{ (states('input_text.jardin_journal_passages') | default('[]') | from_json) }}"
-    sequence:
-      - variables:
-          nouvelle_entree:
-            timestamp: "{{ now().isoformat() }}"
-            nom: "{{ nom | default('Inconnu') }}"
-            rssi: "{{ rssi | default(0) }}"
-            source: "{{ source | default('?') }}"
-          journal_mis_a_jour: |
-            {%- set journal = journal_actuel -%}
-            {%- set _ = journal.insert(0, nouvelle_entree) -%}
-            {%- if journal | length > 5 -%}
-              {{ journal[:5] | tojson }}
-            {%- else -%}
-              {{ journal | tojson }}
-            {%- endif -%}
-      - service: input_text.set_value
-        target:
-          entity_id: input_text.jardin_journal_passages
-        data:
-          value: "{{ journal_mis_a_jour[:255] }}"
+                  value: >-
+                    {{ states('input_text.badge_' ~ badge_index ~ '_nom') }},
+                    RSSI {{ rssi_int }}, {{ source | capitalize }},
+                    {{ now().strftime('%d/%m %H:%M') }}
 
   # Appelé quand le relais Shelly passe à "on" : si un badge a été vu dans
   # les X dernières secondes (badge_timeout_detection), applique sa durée.
@@ -543,7 +533,8 @@ script:
 # ============================================================================
 automation:
   # Détection d'un badge BLE via événement ESPHome (journal + horodatage)
-  - alias: "Jardin - Détection badge BLE"
+  - id: "jardin_detection_badge_ble"
+    alias: "Jardin - Détection badge BLE"
     description: "Traite les événements de détection badge (sans allumer la lumière)"
     trigger:
       platform: event
@@ -556,7 +547,8 @@ automation:
           source: "{{ trigger.event.data.source }}"
 
   # Allumage manuel (clic) : applique la durée du badge si vu récemment
-  - alias: "Jardin - Allumage avec badge récent"
+  - id: "jardin_allumage_badge_recent"
+    alias: "Jardin - Allumage avec badge récent"
     description: "Sur clic, utilise la durée du badge s'il a été détecté dans les X dernières secondes"
     trigger:
       platform: state
@@ -566,7 +558,8 @@ automation:
       - service: script.jardin_declencher_duree_badge
 
   # Extinction manuelle (via tableau de bord ou bouton physique)
-  - alias: "Jardin - Extinction manuelle"
+  - id: "jardin_extinction_manuelle"
+    alias: "Jardin - Extinction manuelle"
     description: "Restaure durée de base à l'extinction"
     trigger:
       platform: state
@@ -577,7 +570,8 @@ automation:
       - service: script.jardin_extinction_manuelle
 
   # Synchro durée de base au démarrage de HA
-  - alias: "Jardin - Synchro durée au démarrage"
+  - id: "jardin_synchro_duree_demarrage"
+    alias: "Jardin - Synchro durée au démarrage"
     description: "Pousse la durée de base vers le Shelly au démarrage"
     trigger:
       platform: homeassistant
@@ -589,7 +583,8 @@ automation:
           duration: "{{ states('input_number.duree_active_d_eclairage') | int(default=60) }}"
 
   # Synchro durée de base si changement dans le tableau de bord
-  - alias: "Jardin - Synchro durée sur changement"
+  - id: "jardin_synchro_duree_changement"
+    alias: "Jardin - Synchro durée sur changement"
     description: "Pousse la durée de base vers le Shelly si modification"
     trigger:
       platform: state
@@ -598,3 +593,16 @@ automation:
       - service: rest_command.shelly_set_duration
         data:
           duration: "{{ states('input_number.duree_active_d_eclairage') | int(default=60) }}"
+
+  # Purge quotidienne de l'historique du journal (14 jours de conservation)
+  - id: "jardin_purge_journal"
+    alias: "Jardin - Purge journal des passages"
+    description: "Nettoie l'historique du journal au-delà de 14 jours"
+    trigger:
+      platform: time
+      at: "03:30:00"
+    action:
+      - service: recorder.purge_entities
+        data:
+          entity_id: input_text.jardin_journal_passages
+          keep_days: 14
